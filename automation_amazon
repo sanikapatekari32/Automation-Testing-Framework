@@ -1,0 +1,192 @@
+# Automation Testing Framework for Amazon.in
+
+# Directory Structure:
+# .
+# ├── pages/
+# │   ├── base_page.py
+# │   ├── home_page.py
+# │   ├── search_results_page.py
+# │   └── cart_page.py
+# ├── tests/
+# │   └── test_amazon_flow.py
+# ├── reports/
+# ├── requirements.txt
+# ├── conftest.py
+# └── README.md
+
+# base_page.py
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+
+class BasePage:
+    def __init__(self, driver):
+        self.driver = driver
+
+    def wait_for_element(self, locator, timeout=10):
+        try:
+            return WebDriverWait(self.driver, timeout).until(EC.presence_of_element_located(locator))
+        except TimeoutException:
+            return None
+
+# home_page.py
+from selenium.webdriver.common.by import By
+from pages.base_page import BasePage
+
+class HomePage(BasePage):
+    SEARCH_BOX = (By.ID, "twotabsearchtextbox")
+    SEARCH_BTN = (By.ID, "nav-search-submit-button")
+
+    def search_product(self, product_name):
+        search_input = self.wait_for_element(self.SEARCH_BOX)
+        if search_input:
+            search_input.clear()
+            search_input.send_keys(product_name)
+            self.driver.find_element(*self.SEARCH_BTN).click()
+
+# search_results_page.py
+from selenium.webdriver.common.by import By
+from pages.base_page import BasePage
+
+class SearchResultsPage(BasePage):
+    RESULTS = (By.CSS_SELECTOR, ".s-main-slot .s-result-item[data-asin]")
+    NO_RESULTS_MSG = (By.XPATH, "//*[contains(text(),'did not match any products') or contains(text(),'No results for')]")
+
+    def is_no_results_found(self):
+        return self.wait_for_element(self.NO_RESULTS_MSG) is not None
+
+    def get_result_titles(self):
+        return self.driver.find_elements(*self.RESULTS)
+
+    def select_product(self, index):
+        results = self.get_result_titles()
+        if len(results) > index:
+            results[index].find_element(By.TAG_NAME, "h2").click()
+
+# cart_page.py
+from selenium.webdriver.common.by import By
+from pages.base_page import BasePage
+
+class CartPage(BasePage):
+    QUANTITY_DROPDOWN = (By.NAME, "quantity")
+    CART_ITEMS = (By.CSS_SELECTOR, ".sc-list-item")
+    DELETE_BUTTON = (By.XPATH, "//input[@value='Delete']")
+
+    def update_quantity(self, quantity):
+        dropdown = self.wait_for_element(self.QUANTITY_DROPDOWN)
+        if dropdown:
+            dropdown.click()
+            option = self.driver.find_element(By.XPATH, f"//option[@value='{quantity}']")
+            option.click()
+
+    def remove_product(self):
+        delete_btn = self.wait_for_element(self.DELETE_BUTTON)
+        if delete_btn:
+            delete_btn.click()
+
+    def is_cart_empty(self):
+        return len(self.driver.find_elements(*self.CART_ITEMS)) == 0
+
+# conftest.py
+import pytest
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from webdriver_manager.chrome import ChromeDriverManager
+
+@pytest.fixture(scope="function")
+def driver():
+    options = Options()
+    options.add_argument("--start-maximized")
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    driver.get("https://www.amazon.in/")
+    yield driver
+    driver.quit()
+
+# test_amazon_flow.py
+import time
+import pytest
+from selenium.webdriver.common.by import By
+from pages.home_page import HomePage
+from pages.search_results_page import SearchResultsPage
+from pages.cart_page import CartPage
+
+def test_search_non_existing_product(driver):
+    home = HomePage(driver)
+    home.search_product("ld345tsxslfer")
+    result = SearchResultsPage(driver)
+    assert result.is_no_results_found()
+
+def test_search_existing_product(driver):
+    home = HomePage(driver)
+    home.search_product("Laptop")
+    result = SearchResultsPage(driver)
+    assert len(result.get_result_titles()) > 0
+
+def test_add_product_to_cart(driver):
+    home = HomePage(driver)
+    home.search_product("Laptop")
+    results = SearchResultsPage(driver)
+    results.select_product(3)  # 4th result
+    time.sleep(3)
+    add_to_cart_btn = driver.find_element(By.ID, "add-to-cart-button")
+    add_to_cart_btn.click()
+    time.sleep(3)
+    driver.get("https://www.amazon.in/gp/cart/view.html")
+    assert "Laptop" in driver.page_source
+
+def test_update_quantity(driver):
+    home = HomePage(driver)
+    home.search_product("Laptop")
+    results = SearchResultsPage(driver)
+    results.select_product(3)
+    time.sleep(3)
+    add_to_cart_btn = driver.find_element(By.ID, "add-to-cart-button")
+    add_to_cart_btn.click()
+    time.sleep(3)
+    driver.get("https://www.amazon.in/gp/cart/view.html")
+    cart = CartPage(driver)
+    cart.update_quantity(2)
+    time.sleep(3)
+    assert "2" in driver.page_source
+
+def test_remove_product_from_cart(driver):
+    home = HomePage(driver)
+    home.search_product("Laptop")
+    results = SearchResultsPage(driver)
+    results.select_product(3)
+    time.sleep(3)
+    add_to_cart_btn = driver.find_element(By.ID, "add-to-cart-button")
+    add_to_cart_btn.click()
+    time.sleep(3)
+    driver.get("https://www.amazon.in/gp/cart/view.html")
+    cart = CartPage(driver)
+    cart.remove_product()
+    time.sleep(3)
+    assert cart.is_cart_empty()
+
+# requirements.txt
+selenium
+pytest
+webdriver-manager
+
+# README.md
+# Amazon Automation Test Suite
+
+## Setup
+bash
+pip install -r requirements.txt
+
+
+## Run Tests
+bash
+pytest --html=reports/report.html
+
+
+## Description
+Automated test cases using Selenium and Pytest for:
+- Searching non-existing/existing products
+- Adding to cart
+- Updating quantity
+- Removing products
